@@ -6,7 +6,7 @@ from sqlmodel import create_engine, SQLModel, Session
 load_dotenv()
 
 connection_url = URL.create(
-    drivername="mysql+pymysql",
+    drivername="postgresql+psycopg2",
     username=os.getenv("DB_USER"),
     password=os.getenv("DB_PASSWORD"),
     host=os.getenv("DB_HOST"),
@@ -14,7 +14,7 @@ connection_url = URL.create(
     database=os.getenv("DB_NAME"),
 )
 
-engine = create_engine(connection_url, echo=True)
+engine = create_engine(connection_url, echo=False)
 
 
 def create_db_and_tables():
