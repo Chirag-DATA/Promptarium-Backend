@@ -16,7 +16,7 @@ origins = [
     "https://promptarium.netlify.app",
 ]
 
-print("DEBUG ORIGINS:", repr(origins))
+
 
 app.add_middleware(
     CORSMiddleware,
