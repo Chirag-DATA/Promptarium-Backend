@@ -42,3 +42,7 @@ def on_startup():
 @app.get("/")
 def read_root():
     return {"message": "Promptarium API is running"}
+
+@app.get("/health")
+def health():
+    return {"status" : "ok"}
