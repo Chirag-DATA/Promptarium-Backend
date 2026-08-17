@@ -14,7 +14,7 @@ connection_url = URL.create(
     database=os.getenv("DB_NAME"),
 )
 
-engine = create_engine(connection_url, echo=False)
+engine = create_engine(connection_url, echo=False, connect_args={"sslmode": "require"})
 
 
 def create_db_and_tables():
