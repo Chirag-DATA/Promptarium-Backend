@@ -3,9 +3,10 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from slowapi import _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
-from slowapi.middleware import SlowAPIMiddleware
+
+from slowapi import _rate_limit_exceeded_handler  # pyright: ignore[reportMissingImports]
+from slowapi.errors import RateLimitExceeded # pyright: ignore[reportMissingImports]
+from slowapi.middleware import SlowAPIMiddleware # pyright: ignore[reportMissingImports]
 
 from app.core.limiter import limiter
 from app.database import create_db_and_tables
