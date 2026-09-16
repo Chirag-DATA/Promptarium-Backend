@@ -3,20 +3,20 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
+from app.core.limiter import limiter
 from app.database import create_db_and_tables
 from app import models  # noqa: F401
 from app.routers import auth, prompts
-
-limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI(title="Promptarium API")
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 origins = [
     "http://localhost:5173",
