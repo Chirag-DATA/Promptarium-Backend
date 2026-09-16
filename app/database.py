@@ -14,7 +14,11 @@ connection_url = URL.create(
     database=os.getenv("DB_NAME"),
 )
 
-engine = create_engine(connection_url, echo=False, connect_args={"sslmode": "require"})
+IS_PRODUCTION = os.getenv("ENVIRONMENT") == "production"
+
+connect_args = {"sslmode": "require"} if IS_PRODUCTION else {}
+
+engine = create_engine(connection_url, echo=False, connect_args=connect_args)
 
 
 def create_db_and_tables():

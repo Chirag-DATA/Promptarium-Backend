@@ -1,8 +1,10 @@
 import os
 import uuid
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from fastapi.security import OAuth2PasswordRequestForm
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlmodel import Session, select
 
 from app.auth.dependencies import get_current_user
@@ -10,6 +12,8 @@ from app.auth.security import create_access_token, hash_password, verify_passwor
 from app.database import get_session
 from app.models.user import User
 from app.schemas.user import Token, UserCreate, UserRead, UserUpdate
+
+limiter = Limiter(key_func=get_remote_address)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -19,7 +23,8 @@ MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
 
 
 @router.post("/signup", response_model=UserRead, status_code=status.HTTP_201_CREATED)
-def signup(user_data: UserCreate, session: Session = Depends(get_session)):
+@limiter.limit("5/hour")
+def signup(request: Request, user_data: UserCreate, session: Session = Depends(get_session)):
     existing_user = session.exec(
         select(User).where(User.email == user_data.email)
     ).first()
@@ -43,7 +48,9 @@ def signup(user_data: UserCreate, session: Session = Depends(get_session)):
 
 
 @router.post("/login", response_model=Token)
+@limiter.limit("10/minute")
 def login(
+    request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     session: Session = Depends(get_session),
 ):
