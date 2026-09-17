@@ -3,7 +3,7 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
 from sqlmodel import Session, select
 
-from app.auth.security import decode_access_token
+from app.auth.security import decode_token
 from app.database import get_session
 from app.models.user import User
 
@@ -21,7 +21,7 @@ def get_current_user(
     )
 
     try:
-        payload = decode_access_token(token)
+        payload = decode_token(token, expected_type="access")
         user_id = payload.get("sub")
         if user_id is None:
             raise credentials_exception

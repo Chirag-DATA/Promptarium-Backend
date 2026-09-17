@@ -1,12 +1,13 @@
 import os
 import uuid
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
 from fastapi.security import OAuth2PasswordRequestForm
+from jose import JWTError
 from sqlmodel import Session, select
 
 from app.auth.dependencies import get_current_user
-from app.auth.security import create_access_token, hash_password, verify_password
+from app.auth.security import create_access_token, create_refresh_token, decode_token, hash_password, verify_password
 from app.core.rate_limiter import RateLimiter
 from app.database import get_session
 from app.models.user import User
@@ -17,9 +18,23 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 UPLOAD_DIR = "app/static/uploads"
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
+REFRESH_COOKIE_NAME = "promptarium_refresh_token"
 
-login_limiter = RateLimiter(max_requests=10, window_seconds=60)
+login_limiter = RateLimiter(max_requests=5, window_seconds=60)
 signup_limiter = RateLimiter(max_requests=5, window_seconds=3600)
+
+
+def set_refresh_cookie(response: Response, user_id: int):
+    refresh_token = create_refresh_token(data={"sub": str(user_id)})
+    response.set_cookie(
+        key=REFRESH_COOKIE_NAME,
+        value=refresh_token,
+        httponly=True,
+        secure=True,
+        samesite="none",
+        path="/auth",
+        max_age=60 * 60 * 24 * 7,
+    )
 
 
 @router.post(
@@ -57,6 +72,7 @@ def signup(user_data: UserCreate, session: Session = Depends(get_session)):
     dependencies=[Depends(login_limiter)],
 )
 def login(
+    response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
     session: Session = Depends(get_session),
 ):
@@ -72,8 +88,46 @@ def login(
         )
 
     access_token = create_access_token(data={"sub": str(user.id)})
+    set_refresh_cookie(response, user.id)
 
     return {"access_token": access_token, "token_type": "bearer"}
+
+
+@router.post("/refresh", response_model=Token)
+def refresh_access_token(request: Request, response: Response, session: Session = Depends(get_session)):
+    refresh_token = request.cookies.get(REFRESH_COOKIE_NAME)
+
+    if not refresh_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="No refresh token found. Please log in again.",
+        )
+
+    try:
+        payload = decode_token(refresh_token, expected_type="refresh")
+        user_id = payload.get("sub")
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired refresh token. Please log in again.",
+        )
+
+    user = session.get(User, int(user_id))
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User no longer exists.",
+        )
+
+    new_access_token = create_access_token(data={"sub": str(user.id)})
+
+    return {"access_token": new_access_token, "token_type": "bearer"}
+
+
+@router.post("/logout")
+def logout(response: Response):
+    response.delete_cookie(key=REFRESH_COOKIE_NAME, path="/auth")
+    return {"message": "Logged out successfully."}
 
 
 @router.get("/me", response_model=UserRead)
