@@ -1,19 +1,16 @@
 import os
 import uuid
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.security import OAuth2PasswordRequestForm
-from fastapi import Request
-from app.core.limiter import limiter
 from sqlmodel import Session, select
 
 from app.auth.dependencies import get_current_user
 from app.auth.security import create_access_token, hash_password, verify_password
+from app.core.rate_limiter import RateLimiter
 from app.database import get_session
 from app.models.user import User
 from app.schemas.user import Token, UserCreate, UserRead, UserUpdate
-
-
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -21,10 +18,17 @@ UPLOAD_DIR = "app/static/uploads"
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
 
+login_limiter = RateLimiter(max_requests=10, window_seconds=60)
+signup_limiter = RateLimiter(max_requests=5, window_seconds=3600)
 
-@router.post("/signup", response_model=UserRead, status_code=status.HTTP_201_CREATED)
-@limiter.limit("5/hour")
-def signup(request: Request, user_data: UserCreate, session: Session = Depends(get_session)):
+
+@router.post(
+    "/signup",
+    response_model=UserRead,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(signup_limiter)],
+)
+def signup(user_data: UserCreate, session: Session = Depends(get_session)):
     existing_user = session.exec(
         select(User).where(User.email == user_data.email)
     ).first()
@@ -47,10 +51,12 @@ def signup(request: Request, user_data: UserCreate, session: Session = Depends(g
     return new_user
 
 
-@router.post("/login", response_model=Token)
-@limiter.limit("10/minute")
+@router.post(
+    "/login",
+    response_model=Token,
+    dependencies=[Depends(login_limiter)],
+)
 def login(
-    request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     session: Session = Depends(get_session),
 ):
