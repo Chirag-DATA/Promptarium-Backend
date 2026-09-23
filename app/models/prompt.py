@@ -20,6 +20,7 @@ class Prompt(SQLModel, table=True):
     is_favorite: bool = Field(default=False)
     is_pinned: bool = Field(default=False)
     is_archived: bool = Field(default=False)
+    is_public: bool = Field(default=False)
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

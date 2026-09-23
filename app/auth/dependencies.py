@@ -1,7 +1,9 @@
-from fastapi import Depends, HTTPException, status
+from typing import Optional
+
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 from app.auth.security import decode_token
 from app.database import get_session
@@ -33,3 +35,26 @@ def get_current_user(
         raise credentials_exception
 
     return user
+
+
+def get_optional_user(
+    request: Request,
+    session: Session = Depends(get_session),
+) -> Optional[User]:
+    auth_header = request.headers.get("Authorization")
+
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return None
+
+    token = auth_header.split(" ")[1]
+
+    try:
+        payload = decode_token(token, expected_type="access")
+        user_id = payload.get("sub")
+    except JWTError:
+        return None
+
+    if not user_id:
+        return None
+
+    return session.get(User, int(user_id))
