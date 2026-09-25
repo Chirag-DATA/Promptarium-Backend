@@ -9,10 +9,13 @@ from app.routers import auth, prompts
 
 UPLOAD_DIR = "app/static/uploads"
 
+# FIX: Create the directory synchronously at module load time so StaticFiles never fails
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    # Ensure tables exist
     create_db_and_tables()
     yield
 
