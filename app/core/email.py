@@ -1,9 +1,17 @@
+import json
 import os
 import random
 import smtplib
+import urllib.error
+import urllib.request
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
+# Brevo HTTP API Configuration (for Render on Port 443)
+BREVO_API_KEY = os.getenv("BREVO_API_KEY")
+SENDER_EMAIL = os.getenv("SENDER_EMAIL") or os.getenv("SMTP_USER")
+
+# Fallback SMTP Configuration (for local development on Port 587)
 SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
 SMTP_USER = os.getenv("SMTP_USER")
@@ -15,17 +23,59 @@ def generate_otp() -> str:
     return f"{random.randint(100000, 999999)}"
 
 
-def send_otp_email(recipient_email: str, otp: str):
-    """Sends a styled confirmation OTP to the recipient for signup."""
-    if not SMTP_USER or not SMTP_PASSWORD:
-        print(f"[DEV MODE] SMTP not configured. Signup OTP for {recipient_email}: {otp}")
-        return
+def _send_via_brevo_api(recipient_email: str, subject: str, html_content: str):
+    """Sends an email via Brevo REST API over standard HTTPS (Port 443)."""
+    url = "https://api.brevo.com/v3/smtp/email"
+    headers = {
+        "accept": "application/json",
+        "api-key": BREVO_API_KEY,
+        "content-type": "application/json",
+    }
+    payload = {
+        "sender": {"name": "Promptarium", "email": SENDER_EMAIL},
+        "to": [{"email": recipient_email}],
+        "subject": subject,
+        "htmlContent": html_content,
+    }
 
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=10) as response:
+            print(f"[EMAIL SUCCESS] Brevo API delivered email to {recipient_email}. Status: {response.status}")
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode()
+        print(f"[EMAIL ERROR] Brevo API failed ({e.code}): {error_body}")
+    except Exception as e:
+        print(f"[EMAIL ERROR] Unexpected error sending via Brevo API: {e}")
+
+
+def _send_via_smtp(recipient_email: str, subject: str, html_content: str):
+    """Sends an email via standard SMTP (local development only)."""
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"Your Promptarium Verification Code: {otp}"
+    msg["Subject"] = subject
     msg["From"] = f"Promptarium <{SMTP_USER}>"
     msg["To"] = recipient_email
+    msg.attach(MIMEText(html_content, "html"))
 
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
+            server.starttls()
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.send_message(msg)
+        print(f"[EMAIL SUCCESS] SMTP delivered email to {recipient_email}")
+    except Exception as e:
+        print(f"[EMAIL ERROR] SMTP delivery failed: {e}")
+
+
+def send_otp_email(recipient_email: str, otp: str):
+    """Dispatches signup verification OTP."""
+    subject = f"Your Promptarium Verification Code: {otp}"
     html_content = f"""
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff;">
         <h2 style="color: #0f172a; margin-top: 0;">Confirm Your Account</h2>
@@ -43,25 +93,17 @@ def send_otp_email(recipient_email: str, otp: str):
     </div>
     """
 
-    msg.attach(MIMEText(html_content, "html"))
-
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-        server.starttls()
-        server.login(SMTP_USER, SMTP_PASSWORD)
-        server.send_message(msg)
+    if BREVO_API_KEY and SENDER_EMAIL:
+        _send_via_brevo_api(recipient_email, subject, html_content)
+    elif SMTP_USER and SMTP_PASSWORD:
+        _send_via_smtp(recipient_email, subject, html_content)
+    else:
+        print(f"[DEV MODE] Email provider not configured. OTP for {recipient_email}: {otp}")
 
 
 def send_delete_account_otp_email(recipient_email: str, otp: str):
-    """Sends an urgent account deletion confirmation OTP."""
-    if not SMTP_USER or not SMTP_PASSWORD:
-        print(f"[DEV MODE] SMTP not configured. Account Deletion OTP for {recipient_email}: {otp}")
-        return
-
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"Action Required: Confirm Account Deletion Code {otp}"
-    msg["From"] = f"Promptarium Security <{SMTP_USER}>"
-    msg["To"] = recipient_email
-
+    """Dispatches account deletion verification OTP."""
+    subject = f"Action Required: Confirm Account Deletion Code {otp}"
     html_content = f"""
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px; border: 1px solid #fecdd3; border-radius: 16px; background-color: #fff1f2;">
         <h2 style="color: #9f1239; margin-top: 0;">Permanently Delete Account</h2>
@@ -82,9 +124,9 @@ def send_delete_account_otp_email(recipient_email: str, otp: str):
     </div>
     """
 
-    msg.attach(MIMEText(html_content, "html"))
-
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-        server.starttls()
-        server.login(SMTP_USER, SMTP_PASSWORD)
-        server.send_message(msg)
+    if BREVO_API_KEY and SENDER_EMAIL:
+        _send_via_brevo_api(recipient_email, subject, html_content)
+    elif SMTP_USER and SMTP_PASSWORD:
+        _send_via_smtp(recipient_email, subject, html_content)
+    else:
+        print(f"[DEV MODE] Email provider not configured. Account Deletion OTP for {recipient_email}: {otp}")
