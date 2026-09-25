@@ -1,6 +1,5 @@
 from datetime import datetime, timezone
 from typing import List, Optional, TYPE_CHECKING
-
 from sqlmodel import SQLModel, Field, Relationship
 
 if TYPE_CHECKING:
@@ -13,6 +12,9 @@ class User(SQLModel, table=True):
     username: Optional[str] = Field(default=None, unique=True, index=True)
     profile_image_url: Optional[str] = Field(default=None)
     hashed_password: str
+    is_verified: bool = Field(default=False)
+    otp_code: Optional[str] = Field(default=None)
+    otp_expires_at: Optional[datetime] = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     prompts: List["Prompt"] = Relationship(back_populates="owner")

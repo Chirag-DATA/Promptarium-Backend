@@ -1,18 +1,34 @@
 import os
-
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.database import create_db_and_tables
-from app import models  # noqa: F401
 from app.routers import auth, prompts
 
-app = FastAPI(title="Promptarium API")
+UPLOAD_DIR = "app/static/uploads"
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    create_db_and_tables()
+    yield
+
+
+app = FastAPI(
+    title="Promptarium API",
+    description="Backend API powering the Promptarium AI Prompt Vault",
+    version="2.0.0",
+    lifespan=lifespan,
+)
+
+# CORS configuration
 origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "http://localhost:3000",
     "https://promptarium.netlify.app",
 ]
 
@@ -22,22 +38,16 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["Set-Cookie"],
 )
 
-UPLOAD_DIR = "app/static/uploads"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+# Mount static file route for profile images
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
+# Include routers
 app.include_router(auth.router)
 app.include_router(prompts.router)
 
 
-@app.on_event("startup")
-def on_startup():
-    create_db_and_tables()
-
-
-@app.get("/")
-def read_root():
-    return {"message": "Promptarium API is running"}
+@app.get("/", tags=["health"])
+def health_check():
+    return {"status": "healthy", "service": "Promptarium API"}
