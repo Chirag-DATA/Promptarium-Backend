@@ -1,8 +1,9 @@
 from datetime import datetime, timedelta, timezone
 import os
 import uuid
-from sqlalchemy import text
 
+import cloudinary
+import cloudinary.uploader
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -16,6 +17,7 @@ from fastapi import (
 )
 from fastapi.security import OAuth2PasswordRequestForm
 from jose import JWTError
+from sqlalchemy import text
 from sqlmodel import Session, select
 
 from app.auth.dependencies import get_current_user
@@ -48,12 +50,27 @@ from app.schemas.user import (
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 UPLOAD_DIR = "app/static/uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
 REFRESH_COOKIE_NAME = "promptarium_refresh_token"
 OTP_EXPIRE_MINUTES = 10
 
 IS_PRODUCTION = os.getenv("ENVIRONMENT", "development").lower() == "production"
+
+# Configure Cloudinary credentials from environment
+CLOUDINARY_CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME")
+CLOUDINARY_API_KEY = os.getenv("CLOUDINARY_API_KEY")
+CLOUDINARY_API_SECRET = os.getenv("CLOUDINARY_API_SECRET")
+
+if CLOUDINARY_CLOUD_NAME and CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET:
+    cloudinary.config(
+        cloud_name=CLOUDINARY_CLOUD_NAME,
+        api_key=CLOUDINARY_API_KEY,
+        api_secret=CLOUDINARY_API_SECRET,
+        secure=True,
+    )
 
 login_limiter = RateLimiter(max_requests=5, window_seconds=60)
 signup_limiter = RateLimiter(max_requests=5, window_seconds=3600)
@@ -69,7 +86,7 @@ def set_refresh_cookie(response: Response, user_id: int):
         secure=IS_PRODUCTION,
         samesite="none" if IS_PRODUCTION else "lax",
         path="/auth",
-        max_age=60 * 60 * 24 * 7,
+        max_age=60 * 60 * 24 * 7,  # 7 days
     )
 
 
@@ -327,15 +344,34 @@ def upload_profile_photo(
             detail="Image must be smaller than 5MB.",
         )
 
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    # 1. Primary: Upload permanently to Cloudinary if configured
+    if CLOUDINARY_CLOUD_NAME and CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET:
+        try:
+            upload_result = cloudinary.uploader.upload(
+                contents,
+                folder="promptarium_avatars",
+                public_id=f"user_{current_user.id}",
+                overwrite=True,
+                resource_type="image",
+                transformation=[
+                    {"width": 300, "height": 300, "crop": "fill", "gravity": "face"}
+                ],
+            )
+            current_user.profile_image_url = upload_result.get("secure_url")
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Cloud media upload failed: {str(e)}",
+            )
+    else:
+        # 2. Fallback: Save to local disk for development without Cloudinary
+        unique_filename = f"{uuid.uuid4()}{file_extension}"
+        file_path = os.path.join(UPLOAD_DIR, unique_filename)
 
-    unique_filename = f"{uuid.uuid4()}{file_extension}"
-    file_path = os.path.join(UPLOAD_DIR, unique_filename)
+        with open(file_path, "wb") as f:
+            f.write(contents)
 
-    with open(file_path, "wb") as f:
-        f.write(contents)
-
-    current_user.profile_image_url = f"/uploads/{unique_filename}"
+        current_user.profile_image_url = f"/uploads/{unique_filename}"
 
     session.add(current_user)
     session.commit()
@@ -343,8 +379,6 @@ def upload_profile_photo(
 
     return current_user
 
-
-# --- NEW: Delete Account OTP Endpoints ---
 
 @router.post(
     "/delete-account/request-otp",
@@ -385,8 +419,7 @@ def confirm_delete_account(
             detail="Invalid deletion verification code.",
         )
 
-    # 1. Delete all likes referencing this user or this user's prompts
-    #    (Prevents ForeignKeyViolation on promptlike table)
+    # 1. Delete likes given by or referencing this user
     session.execute(
         text("""
             DELETE FROM promptlike 
@@ -403,21 +436,27 @@ def confirm_delete_account(
     for prompt in user_prompts:
         session.delete(prompt)
 
-    # 3. Remove profile photo from disk if present
-    if current_user.profile_image_url and current_user.profile_image_url.startswith("/uploads/"):
-        filename = os.path.basename(current_user.profile_image_url)
-        file_path = os.path.join(UPLOAD_DIR, filename)
-        if os.path.exists(file_path):
+    # 3. Clean up profile image (Cloudinary or local filesystem)
+    if current_user.profile_image_url:
+        if "res.cloudinary.com" in current_user.profile_image_url and CLOUDINARY_CLOUD_NAME:
             try:
-                os.remove(file_path)
-            except OSError:
+                cloudinary.uploader.destroy(f"promptarium_avatars/user_{current_user.id}")
+            except Exception:
                 pass
+        elif current_user.profile_image_url.startswith("/uploads/"):
+            filename = os.path.basename(current_user.profile_image_url)
+            file_path = os.path.join(UPLOAD_DIR, filename)
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except OSError:
+                    pass
 
-    # 4. Permanently remove the user record
+    # 4. Permanently delete user record
     session.delete(current_user)
     session.commit()
 
-    # 5. Invalidate refresh token cookie
+    # 5. Clear refresh cookie
     response.delete_cookie(
         key=REFRESH_COOKIE_NAME,
         path="/auth",
